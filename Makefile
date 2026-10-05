@@ -3,6 +3,7 @@ BINDIR ?= $(PREFIX)/bin
 LIBEXECDIR ?= $(PREFIX)/libexec
 DATADIR ?= $(PREFIX)/share/iairport
 CODESIGN_IDENTITY ?= -
+SWIFT_BUILD_FLAGS ?=
 APPDIR := build/iairport.app
 
 .PHONY: all build bundle test install uninstall clean
@@ -10,7 +11,7 @@ APPDIR := build/iairport.app
 all: bundle
 
 build:
-	swift build -c release
+	swift build -c release $(SWIFT_BUILD_FLAGS)
 
 bundle: build
 	rm -rf "$(APPDIR)"
