@@ -10,7 +10,9 @@ airportd log lines redact BSSIDs without Apple's Wi-Fi logging profile. iairport
 
 ## Location permission
 
-The first run needs the macOS Location prompt. If the grant is denied or missing, iairport runs in cache mode. The warning names System Settings > Privacy & Security > Location Services > iairport. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`.
+The first run needs the macOS Location prompt. If the grant is denied or missing, iairport runs in cache mode. The warning names System Settings > Privacy & Security > Location Services > iairport. The grant is tied to the installed binary signature, so changed code asks again after an upgrade or `sudo make install`.
+
+macOS keeps one Location record per app bundle id. Two installed copies with different signatures, such as a Homebrew build next to a `make install` build, share that record. While one copy is running, the other gets no prompt and stays in cache mode. Starting an older copy while the current one was live dropped both to cache mode until that run ended. Keep one install.
 
 ## Protected folders
 

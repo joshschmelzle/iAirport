@@ -125,7 +125,7 @@ public final class IAirportMonitor {
             if let protectedFolder {
                 renderer.event(line: "Location is granted, but the app bundle is under \(protectedFolder), which macOS protects. locationd cannot identify it there. Run `sudo make install` and use /usr/local/bin/iairport.", color: .yellow)
             } else {
-                renderer.event(line: "Location not granted. BSSID comes from the scan cache and can lag after a join. Allow it in System Settings > Privacy & Security > Location Services > iairport.", color: .yellow)
+                renderer.event(line: "Location not granted. BSSID comes from the scan cache and can lag after a join. Allow it in System Settings > Privacy & Security > Location Services > iairport. If no prompt appeared, quit any other running copy of iairport and run again.", color: .yellow)
             }
         }
     }
