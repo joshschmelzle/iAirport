@@ -310,3 +310,102 @@ final class UtilityTests: XCTestCase {
         XCTAssertNil(CacheModeRoam.transitionFromDriverSignal(old: old, cachedBSSIDAfterSettle: "00:0b:86:11:22:02", at: t0.addingTimeInterval(3)))
     }
 }
+
+final class RendererTests: XCTestCase {
+    func testStatusLineClipsToTerminalWidth() {
+        let line = String(repeating: "x", count: 100)
+        XCTAssertEqual(Renderer.clip(line, toColumns: 80).count, 79)
+        XCTAssertEqual(Renderer.clip(line, toColumns: 100).count, 99)
+        XCTAssertEqual(Renderer.clip(line, toColumns: 101), line)
+        XCTAssertEqual(Renderer.clip(line, toColumns: nil), line)
+        XCTAssertEqual(Renderer.clip(line, toColumns: 1), line)
+    }
+}
+
+final class APNameTests: XCTestCase {
+    private func vendorIE(oui: [UInt8], payload: [UInt8]) -> [UInt8] {
+        let body = oui + payload
+        return [0xdd, UInt8(body.count)] + body
+    }
+
+    func testArubaAPName() {
+        let name = Array("AP-Lobby-01".utf8)
+        let ssid: [UInt8] = [0x00, 0x03] + Array("Net".utf8)
+        let aruba = vendorIE(oui: [0x00, 0x0b, 0x86], payload: [0x01, 0x03, 0x00] + name)
+        let arm = vendorIE(oui: [0x00, 0x0b, 0x86], payload: [0x01, 0x04, 0x08, 0x1b])
+        let blob = Data(ssid + arm + aruba)
+        XCTAssertEqual(APNameDecoder.apName(in: blob), "AP-Lobby-01")
+        XCTAssertEqual(InformationElements.parse(blob).count, 3)
+    }
+
+    func testCiscoAPNameV2() {
+        let blob = Data(vendorIE(oui: [0x00, 0x40, 0x96], payload: [47] + Array("AP-Floor2-West".utf8)))
+        XCTAssertEqual(APNameDecoder.apName(in: blob), "AP-Floor2-West")
+        let other = Data(vendorIE(oui: [0x00, 0x40, 0x96], payload: [0x03, 0x05]))
+        XCTAssertNil(APNameDecoder.apName(in: other))
+    }
+
+    func testCiscoCCX1DeviceName() {
+        var body = [UInt8](repeating: 0, count: 10)
+        body += Array("ap-ccx-01".utf8) + [UInt8](repeating: 0, count: 7)
+        body += [0x02, 0x00, 0x00]
+        XCTAssertEqual(body.count, 29)
+        XCTAssertEqual(APNameDecoder.apName(in: Data([0x85, UInt8(body.count)] + body)), "ap-ccx-01")
+        XCTAssertNil(APNameDecoder.apName(in: Data([0x85, 20] + [UInt8](repeating: 0x41, count: 20))))
+    }
+
+    func testRejectsTruncatedAndUnprintableNames() {
+        let truncated = Data([0xdd, 0x20, 0x00, 0x0b, 0x86, 0x01, 0x03, 0x00, 0x41])
+        XCTAssertNil(APNameDecoder.apName(in: truncated))
+        XCTAssertTrue(InformationElements.parse(truncated).isEmpty)
+        let control = Data(vendorIE(oui: [0x00, 0x0b, 0x86], payload: [0x01, 0x03, 0x00, 0x41, 0x07, 0x42]))
+        XCTAssertNil(APNameDecoder.apName(in: control))
+        let padded = Data(vendorIE(oui: [0x00, 0x0b, 0x86], payload: [0x01, 0x03, 0x00] + Array("AP 7  ".utf8) + [0, 0]))
+        XCTAssertEqual(APNameDecoder.apName(in: padded), "AP 7")
+        XCTAssertNil(APNameDecoder.apName(in: Data()))
+    }
+
+    func testOtherVendorLayouts() {
+        func name(_ oui: [UInt8], _ payload: [UInt8]) -> String? {
+            APNameDecoder.apName(in: Data(vendorIE(oui: oui, payload: payload)))
+        }
+        let ap = Array("AP-Test-01".utf8)
+        XCTAssertEqual(name([0x00, 0xe0, 0xfc], [0x01, 0x01, 0x00] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x00, 0x19, 0x77], [33, 0x01, 0x00, UInt8(ap.count)] + ap + [0xff, 0xff]), "AP-Test-01")
+        // lswifi example: 00 a0 f8 01 03 01 0f c0 00 00 00 06 'ap8533'
+        XCTAssertEqual(name([0x00, 0xa0, 0xf8], [0x01, 0x03, 0x01, 0x0f, 0xc0, 0x00, 0x00, 0x00, 0x06] + Array("ap8533".utf8)), "ap8533")
+        let model = Array("FAP231F".utf8)
+        XCTAssertEqual(name([0x00, 0x09, 0x0f], [10, 0, 2, UInt8(model.count)] + model + [1, UInt8(ap.count)] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x00, 0x11, 0x74], [6] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x00, 0x11, 0x74], [0, 6, 0] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x5c, 0x5b, 0x35], [1] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x00, 0x15, 0x6d], [1] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x00, 0x13, 0x92], [3] + ap), "AP-Test-01")
+        XCTAssertEqual(name([0x84, 0x80, 0x94], [0] + ap), "AP-Test-01")
+        XCTAssertNil(name([0x00, 0x13, 0x92], [1] + ap))
+        XCTAssertNil(name([0x00, 0x50, 0xf2], [2, 1, 1, 0x80] + ap))
+    }
+
+    func testRoamNotificationPrefersAPNames() {
+        let t0 = Date()
+        let old = AssociationInfo(bssid: "00:0b:86:11:22:01", channel: 44, since: t0, bssidSource: .live, apName: "AP-Lobby-01")
+        let new = AssociationInfo(bssid: "00:0b:86:11:22:02", channel: 149, since: t0, bssidSource: .live, apName: "AP-Lobby-02")
+        let named = AssociationTransition(kind: .roam, old: old, new: new, at: t0)
+        XCTAssertEqual(OutputFormatter.roamNotification(named), "AP-Lobby-01 -> AP-Lobby-02  ch 44 -> 149")
+        var unnamedNew = new
+        unnamedNew.apName = nil
+        let mixed = AssociationTransition(kind: .roam, old: old, new: unnamedNew, at: t0)
+        XCTAssertEqual(OutputFormatter.roamNotification(mixed), "AP-Lobby-01 -> 00:0b:86:11:22:02  ch 44 -> 149")
+        let line = OutputFormatter.transition(named, time: TimeFormatter()).0
+        XCTAssertTrue(line.contains("00:0b:86:11:22:01 (AP-Lobby-01) -> 00:0b:86:11:22:02 (AP-Lobby-02)"), line)
+    }
+
+    func testResolverLearnsAndGivesUp() {
+        let resolver = APNameResolver(interfaceName: "en99")
+        resolver.learn(bssid: "00:0B:86:11:22:01", name: "AP-Lobby-01")
+        XCTAssertEqual(resolver.name(for: "00:0b:86:11:22:01"), "AP-Lobby-01")
+        XCTAssertEqual(resolver.resolve("00:0b:86:11:22:01"), "AP-Lobby-01")
+        XCTAssertNil(resolver.name(for: "?"))
+        XCTAssertNil(resolver.resolve(nil))
+    }
+}

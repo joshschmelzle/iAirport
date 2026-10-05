@@ -18,13 +18,26 @@ public final class Renderer {
 
     public func status(line: String, color: TextColor = .green) {
         guard !jsonMode else { return }
-        let rendered = TextStyle.apply(line, color: color, enabled: colorEnabled, bold: false)
+        // A wrapped status line cannot be redrawn with \r, so clip it to the window.
+        let text = tty ? Renderer.clip(line, toColumns: Renderer.terminalColumns()) : line
+        let rendered = TextStyle.apply(text, color: color, enabled: colorEnabled, bold: false)
         lastStatus = rendered
         if tty {
             writeRaw("\r\u{001B}[2K\(rendered)")
         } else {
             writeLine(rendered)
         }
+    }
+
+    static func terminalColumns() -> Int? {
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else { return nil }
+        return Int(size.ws_col)
+    }
+
+    static func clip(_ line: String, toColumns columns: Int?) -> String {
+        guard let columns, columns > 1, line.count >= columns else { return line }
+        return String(line.prefix(columns - 1))
     }
 
     public func event(line: String, color: TextColor = .none, bold: Bool = false, redrawStatus: Bool = true) {
@@ -87,6 +100,7 @@ public enum OutputFormatter {
             let ssid = sample.ssid ?? ""
             let vendorPrefix = sample.vendor.map { "\($0) " } ?? ""
             let bssid = bssidDisplay(sample.bssid, source: sample.bssidSource)
+            let apName = sample.apName.map { " \($0)" } ?? ""
             var parts: [String] = []
             var channel = "Chan "
             if let ch = sample.channel { channel += "\(ch)" } else { channel += "?" }
@@ -120,7 +134,7 @@ public enum OutputFormatter {
                 if let txFail = sample.txFail { suffix.append("fail \(txFail)") }
                 suffix.append(sample.ipState.compactTag())
             }
-            let line = "\(ts)  \"\(ssid)\" (\(vendorPrefix)\(bssid)) \(parts.joined(separator: " "))  \(quality.joined(separator: " "))  \(suffix.joined(separator: " "))"
+            let line = "\(ts)  \"\(ssid)\" (\(vendorPrefix)\(bssid)\(apName)) \(parts.joined(separator: " "))  \(quality.joined(separator: " "))  \(suffix.joined(separator: " "))"
             return (line, .green)
         }
     }
@@ -130,18 +144,29 @@ public enum OutputFormatter {
         switch transition.kind {
         case .join:
             let new = transition.new
-            return ("\(ts)  JOIN  \(bssidDisplay(new?.bssid, source: new?.bssidSource ?? .live))  \"\(new?.ssid ?? "")\"  ch \(new?.channel.map(String.init) ?? "")  RSSI \(new?.rssi.map(String.init) ?? "")", .cyan)
+            return ("\(ts)  JOIN  \(apDisplay(new))  \"\(new?.ssid ?? "")\"  ch \(new?.channel.map(String.init) ?? "")  RSSI \(new?.rssi.map(String.init) ?? "")", .cyan)
         case .roam:
             let old = transition.old
             let new = transition.new
-            return ("\(ts)  ROAM  \(bssidDisplay(old?.bssid, source: old?.bssidSource ?? .live)) -> \(bssidDisplay(new?.bssid, source: new?.bssidSource ?? .live))  \"\(new?.ssid ?? old?.ssid ?? "")\"  ch \(old?.channel.map(String.init) ?? "") -> \(new?.channel.map(String.init) ?? "")  RSSI \(old?.rssi.map(String.init) ?? "") -> \(new?.rssi.map(String.init) ?? "")", .magenta)
+            return ("\(ts)  ROAM  \(apDisplay(old)) -> \(apDisplay(new))  \"\(new?.ssid ?? old?.ssid ?? "")\"  ch \(old?.channel.map(String.init) ?? "") -> \(new?.channel.map(String.init) ?? "")  RSSI \(old?.rssi.map(String.init) ?? "") -> \(new?.rssi.map(String.init) ?? "")", .magenta)
         case .reconnect:
             let new = transition.new
-            return ("\(ts)  RECONNECT  \(bssidDisplay(new?.bssid, source: new?.bssidSource ?? .live))  \"\(new?.ssid ?? "")\"", .cyan)
+            return ("\(ts)  RECONNECT  \(apDisplay(new))  \"\(new?.ssid ?? "")\"", .cyan)
         case .disconnect:
             let old = transition.old
-            return ("\(ts)  DISCONNECT  \(bssidDisplay(old?.bssid, source: old?.bssidSource ?? .live))  \"\(old?.ssid ?? "")\"", .yellow)
+            return ("\(ts)  DISCONNECT  \(apDisplay(old))  \"\(old?.ssid ?? "")\"", .yellow)
         }
+    }
+
+    /// Notification text for a roam: AP names when the beacons carry them, BSSIDs otherwise.
+    public static func roamNotification(_ transition: AssociationTransition) -> String {
+        let old = transition.old
+        let new = transition.new
+        var text = "\(old?.apName ?? old?.bssid ?? "") -> \(new?.apName ?? new?.bssid ?? "")"
+        if let oldChannel = old?.channel, let newChannel = new?.channel {
+            text += "  ch \(oldChannel) -> \(newChannel)"
+        }
+        return text
     }
 
     public static func sampleJSON(sample: LinkSample, time: TimeFormatter) -> [String: Any] {
@@ -156,6 +181,7 @@ public enum OutputFormatter {
         set(&object, "bssid", sample.bssid)
         object["bssid_source"] = sample.bssidSource.rawValue
         set(&object, "vendor", sample.vendor)
+        set(&object, "ap_name", sample.apName)
         set(&object, "channel", sample.channel)
         set(&object, "width_mhz", sample.widthMHz)
         set(&object, "band", sample.band)
@@ -184,6 +210,8 @@ public enum OutputFormatter {
         ]
         set(&object, "old_bssid", transition.old?.bssid)
         set(&object, "new_bssid", transition.new?.bssid)
+        set(&object, "old_ap_name", transition.old?.apName)
+        set(&object, "new_ap_name", transition.new?.apName)
         object["bssid_source"] = (transition.new?.bssidSource ?? transition.old?.bssidSource ?? .live).rawValue
         set(&object, "ssid", transition.new?.ssid ?? transition.old?.ssid)
         set(&object, "old_channel", transition.old?.channel)
@@ -209,6 +237,12 @@ public enum OutputFormatter {
         if bssid == "?" { return "?" }
         return source == .cache ? "\(bssid)~" : bssid
     }
+
+    private static func apDisplay(_ info: AssociationInfo?) -> String {
+        let bssid = bssidDisplay(info?.bssid, source: info?.bssidSource ?? .live)
+        guard let name = info?.apName else { return bssid }
+        return "\(bssid) (\(name))"
+    }
 }
 
 public struct RoamHistoryEntry: Equatable {
@@ -216,30 +250,35 @@ public struct RoamHistoryEntry: Equatable {
     public var joinTime: Date
     public var ssid: String?
     public var bssid: String
+    public var apName: String?
     public var vendor: String?
     public var channel: Int?
     public var rssiAtJoin: Int?
     public var rssiAtLeave: Int?
     public var leaveTime: Date?
 
-    public init(number: Int, joinTime: Date, ssid: String?, bssid: String, vendor: String?, channel: Int?, rssiAtJoin: Int?) {
+    public init(number: Int, joinTime: Date, ssid: String?, bssid: String, apName: String? = nil, vendor: String?, channel: Int?, rssiAtJoin: Int?) {
         self.number = number
         self.joinTime = joinTime
         self.ssid = ssid
         self.bssid = bssid
+        self.apName = apName
         self.vendor = vendor
         self.channel = channel
         self.rssiAtJoin = rssiAtJoin
     }
 
+    public static let header = "#  time  ssid  bssid  ap_name  vendor  ch  rssi_at_join  rssi_at_leave  dwell"
+
     public func line(time: TimeFormatter, now: Date) -> String {
         let leave = leaveTime ?? now
         let dwell = Units.elapsed(leave.timeIntervalSince(joinTime))
-        return String(format: "%2d  %@  %@  %@  %@  %@  %@  %@  %@",
+        return String(format: "%2d  %@  %@  %@  %@  %@  %@  %@  %@  %@",
                       number,
                       time.status(joinTime),
                       ssid ?? "",
                       bssid,
+                      apName ?? "",
                       vendor ?? "",
                       channel.map(String.init) ?? "",
                       rssiAtJoin.map(String.init) ?? "",
@@ -281,8 +320,8 @@ public final class CSVLogger {
     private let roams: FileHandle?
     private let bssids: FileHandle?
 
-    public static let sampleHeader = "ts_iso,epoch_ms,state,ssid,bssid,bssid_source,vendor,channel,width_mhz,band,phy,security,ft,mcs,nss,gi_ns,tx_rate_mbps,rssi_dbm,noise_dbm,snr_db,cca_pct,tx_retrans,tx_fail,rx_retry,bytes_in,bytes_out,bps_in,bps_out,ipv4,ipv4_gw,ipv6,ipv6_kind,ipv6_gw,ipv6_count"
-    public static let roamHeader = "ts_iso,epoch_ms,kind,ssid,old_bssid,new_bssid,bssid_source,old_channel,new_channel,old_rssi_dbm,new_rssi_dbm,dwell_s,v4_after_roam,v6_after_roam,v4_ready_ms,v6_ready_ms,assoc_ms,auth_ms,linkup_ms,ipv4_ms,ipv6_ms,ipv4_primary_ms,ipv6_primary_ms"
+    public static let sampleHeader = "ts_iso,epoch_ms,state,ssid,bssid,bssid_source,ap_name,vendor,channel,width_mhz,band,phy,security,ft,mcs,nss,gi_ns,tx_rate_mbps,rssi_dbm,noise_dbm,snr_db,cca_pct,tx_retrans,tx_fail,rx_retry,bytes_in,bytes_out,bps_in,bps_out,ipv4,ipv4_gw,ipv6,ipv6_kind,ipv6_gw,ipv6_count"
+    public static let roamHeader = "ts_iso,epoch_ms,kind,ssid,old_bssid,new_bssid,old_ap_name,new_ap_name,bssid_source,old_channel,new_channel,old_rssi_dbm,new_rssi_dbm,dwell_s,v4_after_roam,v6_after_roam,v4_ready_ms,v6_ready_ms,assoc_ms,auth_ms,linkup_ms,ipv4_ms,ipv6_ms,ipv4_primary_ms,ipv6_primary_ms"
 
     public init?(enabled: Bool, time: TimeFormatter, warnings: inout [String]) {
         guard enabled else { return nil }
@@ -296,7 +335,7 @@ public final class CSVLogger {
         guard let samples else { return }
         let v6 = sample.ipState.displayIPv6
         let row = CSV.row([
-            time.csv(sample.timestamp), epochMS(sample.timestamp), sample.status.csvValue, sample.ssid, sample.bssid, sample.bssidSource.rawValue, sample.vendor,
+            time.csv(sample.timestamp), epochMS(sample.timestamp), sample.status.csvValue, sample.ssid, sample.bssid, sample.bssidSource.rawValue, sample.apName, sample.vendor,
             sample.channel.map(String.init), sample.widthMHz.map(String.init), sample.band, sample.phy, sample.security,
             sample.ft ? "1" : "0", sample.mcs.map(String.init), sample.nss.map(String.init), sample.guardIntervalNS.map(String.init), sample.txRateMbps.map { String(format: "%.1f", $0) },
             sample.rssiDBM.map(String.init), sample.noiseDBM.map(String.init), sample.snrDB.map(String.init), sample.ccaPct.map(String.init), sample.txRetrans.map(String.init), sample.txFail.map(String.init), sample.rxRetry.map(String.init),
@@ -310,7 +349,7 @@ public final class CSVLogger {
         guard let roams else { return }
         let row = CSV.row([
             time.csv(transition.at), epochMS(transition.at), transition.kind.rawValue, transition.new?.ssid ?? transition.old?.ssid,
-            transition.old?.bssid, transition.new?.bssid, (transition.new?.bssidSource ?? transition.old?.bssidSource)?.rawValue, transition.old?.channel.map(String.init), transition.new?.channel.map(String.init),
+            transition.old?.bssid, transition.new?.bssid, transition.old?.apName, transition.new?.apName, (transition.new?.bssidSource ?? transition.old?.bssidSource)?.rawValue, transition.old?.channel.map(String.init), transition.new?.channel.map(String.init),
             transition.old?.rssi.map(String.init), transition.new?.rssi.map(String.init), transition.dwell.map { String(format: "%.1f", $0) },
             v4?.csvValue, v6?.csvValue, v4?.milliseconds.map(String.init), v6?.milliseconds.map(String.init),
             timing?.values["assoc"].map(String.init), timing?.values["auth"].map(String.init), timing?.values["linkup"].map(String.init),

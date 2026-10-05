@@ -2,8 +2,8 @@
 
 iairport watches a Mac Wi-Fi link while you roam, disconnect, and join again. It prints one live status line, event lines, IP state, and optional CSV or JSON logs. It is a Swift rewrite of fllthblnks' 2015 Perl [iAirport](legacy/iAirport.pl). The old `airport` and `wifi.log` data are gone from current macOS.
 
-- **Live status line.** It shows SSID, BSSID, vendor, channel, rate, RSSI, noise, SNR, CCA, speed, and bytes.
-- **Roams.** It shows the old and new BSSID, SSID, channel change, and RSSI change.
+- **Live status line.** It shows SSID, BSSID, AP name, vendor, channel, rate, RSSI, noise, SNR, CCA, speed, and bytes.
+- **Roams.** It shows the old and new BSSID, AP name, SSID, channel change, and RSSI change.
 - **Disconnects and reconnects.** It shows link changes and reason text where the log gives one.
 - **Join timing.** It prints association, auth, link, IPv4, and IPv6 timing from airportd.
 - **IP state.** It tracks IPv4, IPv6, routers, and IPv6 address kinds.

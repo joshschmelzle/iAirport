@@ -42,6 +42,7 @@ SCDynamicStore keys under `State:/Network/Interface/<if>/IPv4` and `.../IPv6` ho
 |---|---|---|
 | Live SSID and BSSID | CoreWLAN in `iairport.app` with Location permission | No |
 | Cache SSID and BSSID | SCDynamicStore `CachedScanRecord` | No |
+| AP name | Beacon vendor element from the CoreWLAN scan cache, or from `CachedScanRecord` in cache mode | No |
 | RSSI, noise, Tx rate | CoreWLAN | No |
 | Channel, width, PHY, security | CoreWLAN | No |
 | Roam markers | airportd unified log | No |

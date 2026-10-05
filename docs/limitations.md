@@ -22,7 +22,7 @@ Root has no Location grant, so `sudo iairport` runs the monitor as the invoking 
 
 ## CachedScanRecord
 
-`CachedScanRecord` is an undocumented SCDynamicStore value. It worked on macOS 26.5.1 on the verified host. It can lag the live association for minutes after a join to another AP. iairport marks cache BSSIDs with `~` and treats decode failures as missing data.
+`CachedScanRecord` is an undocumented SCDynamicStore value. It worked on macOS 26.5.1 on the verified host. It can lag the live association for minutes after a join to another AP. iairport marks cache BSSIDs with `~` and treats decode failures as missing data. In cache mode it is also the only source of AP names, so only the current AP can have one.
 
 ## CoreWLAN callbacks
 

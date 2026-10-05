@@ -7,14 +7,16 @@ public struct AssociationInfo: Equatable {
     public var rssi: Int?
     public var since: Date
     public var bssidSource: BSSIDSource
+    public var apName: String?
 
-    public init(bssid: String, ssid: String? = nil, channel: Int? = nil, rssi: Int? = nil, since: Date, bssidSource: BSSIDSource = .cache) {
+    public init(bssid: String, ssid: String? = nil, channel: Int? = nil, rssi: Int? = nil, since: Date, bssidSource: BSSIDSource = .cache, apName: String? = nil) {
         self.bssid = bssid
         self.ssid = ssid
         self.channel = channel
         self.rssi = rssi
         self.since = since
         self.bssidSource = bssidSource
+        self.apName = apName
     }
 }
 
@@ -145,7 +147,7 @@ public extension AssociationSnapshot {
             return .disconnected
         case .associated:
             guard let bssid = sample.bssid else { return .disconnected }
-            return .associated(AssociationInfo(bssid: bssid, ssid: sample.ssid, channel: sample.channel, rssi: sample.rssiDBM, since: sample.timestamp, bssidSource: sample.bssidSource))
+            return .associated(AssociationInfo(bssid: bssid, ssid: sample.ssid, channel: sample.channel, rssi: sample.rssiDBM, since: sample.timestamp, bssidSource: sample.bssidSource, apName: sample.apName))
         }
     }
 }

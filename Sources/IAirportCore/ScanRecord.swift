@@ -7,13 +7,16 @@ public struct CachedScanRecord: Equatable {
     public var channel: Int?
     public var rssi: Int?
     public var noise: Int?
+    /// Raw beacon information elements of the recorded BSS.
+    public var informationElements: Data?
 
-    public init(bssid: String? = nil, ssid: String? = nil, channel: Int? = nil, rssi: Int? = nil, noise: Int? = nil) {
+    public init(bssid: String? = nil, ssid: String? = nil, channel: Int? = nil, rssi: Int? = nil, noise: Int? = nil, informationElements: Data? = nil) {
         self.bssid = bssid
         self.ssid = ssid
         self.channel = channel
         self.rssi = rssi
         self.noise = noise
+        self.informationElements = informationElements
     }
 
     public static func decode(from data: Data) -> CachedScanRecord? {
@@ -32,7 +35,8 @@ public struct CachedScanRecord: Equatable {
             ssid: ssid,
             channel: (object["CHANNEL"] as? NSNumber)?.intValue,
             rssi: (object["RSSI"] as? NSNumber)?.intValue,
-            noise: (object["NOISE"] as? NSNumber)?.intValue
+            noise: (object["NOISE"] as? NSNumber)?.intValue,
+            informationElements: object["IE"] as? Data
         )
     }
 

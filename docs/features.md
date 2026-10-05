@@ -8,7 +8,11 @@ The status line prints once per sample interval. On a TTY it rewrites the same l
 
 ## Roams
 
-A roam is a change from one associated BSSID to another. iairport prints the old and new BSSID, SSID, channel change, and RSSI change. In cache mode, a driver roam can count with `?` as the new BSSID. iairport records the dwell time and keeps a roam history for the exit summary.
+A roam is a change from one associated BSSID to another. iairport prints the old and new BSSID, AP name, SSID, channel change, and RSSI change. In cache mode, a driver roam can count with `?` as the new BSSID. iairport records the dwell time and keeps a roam history for the exit summary.
+
+## AP names
+
+Many enterprise APs put their name in a vendor element of the beacon. iairport decodes Aruba and HPE, Cisco and Meraki, Juniper Mist, Ubiquiti, Ruckus, Extreme and Aerohive, Fortinet, Arista, Huawei, Alcatel-Lucent, Belden, Meter, and Telecom Infra Project layouts. The name prints after the BSSID in the status line, event lines, and summary table, and goes into CSV and JSON as `ap_name`. APs without a name element show only the BSSID. Only Aruba was checked against live beacons. The other layouts follow the Wireshark dissector.
 
 ## Disconnects and reconnects
 
@@ -34,7 +38,7 @@ iairport looks up the first three octets of the BSSID in `oui.txt`. The search s
 
 ## Notifications
 
-Roam notifications use `/usr/bin/osascript`. Notification.swift runs `display notification` with the title `iairport roam`. It escapes quotes before it calls the command. `--no-notify` turns this off.
+Roam notifications use `/usr/bin/osascript`. Notification.swift runs `display notification` with the title `iairport roam`. The text is the old and new AP name, or the BSSID when there is no name, plus the channel change. It escapes quotes before it calls the command. `--no-notify` turns this off.
 
 ## Debug logging as root
 

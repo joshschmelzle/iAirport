@@ -68,6 +68,8 @@ public struct LinkSample: Equatable {
     public var ssid: String?
     public var bssid: String?
     public var vendor: String?
+    /// Friendly AP name from the beacon, when the vendor advertises one.
+    public var apName: String?
     public var channel: Int?
     public var widthMHz: Int?
     public var band: String?

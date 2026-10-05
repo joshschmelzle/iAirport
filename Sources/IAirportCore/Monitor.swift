@@ -10,6 +10,7 @@ public final class IAirportMonitor {
     private let oui: OUI
     private let ouiWarning: String?
     private let linkReader: LinkReader
+    private let apNames: APNameResolver
     private let ipReader: IPStateReader
     private var bssidSource: BSSIDSource
     private var cacheReason: LocationCacheReason?
@@ -70,6 +71,7 @@ public final class IAirportMonitor {
         oui = loaded.0
         ouiWarning = loaded.1
         linkReader = LinkReader(interfaceName: interfaceName)
+        apNames = APNameResolver(interfaceName: interfaceName)
         ipReader = IPStateReader(interfaceName: interfaceName)
         renderer.onOutputClosed = { [weak self] in
             self?.requestShutdown()
@@ -223,6 +225,12 @@ public final class IAirportMonitor {
         if let lqmRate = metricsFromLQMRate(), sample.txRateMbps == nil || sample.txRateMbps == 0 {
             sample.txRateMbps = lqmRate
         }
+        if sample.status == .associated, let bssid = sample.bssid, bssid != "?" {
+            // A BSSID change forces a scan-cache read so the ROAM line and the
+            // notification carry the new AP's name.
+            let changed = association.currentAssociation?.bssid != bssid
+            sample.apName = apNames.resolve(bssid, force: changed, now: sample.timestamp)
+        }
         let beforeIP = lastObservedIP
         let transition = association.commit(.from(sample: sample), at: sample.timestamp)
         if transition != nil {
@@ -304,7 +312,7 @@ public final class IAirportMonitor {
             if let flushed = pendingRoamCSV.replace(transition: transition, timing: timing) {
                 csv?.writeTransition(flushed.transition, timing: flushed.timing)
             }
-            Notifier.post(title: "iairport roam", message: "\(transition.old?.bssid ?? "") -> \(transition.new?.bssid ?? "")", enabled: options.notify)
+            Notifier.post(title: "iairport roam", message: OutputFormatter.roamNotification(transition), enabled: options.notify)
         } else {
             csv?.writeTransition(transition, timing: timing)
         }
@@ -330,6 +338,7 @@ public final class IAirportMonitor {
             joinTime: transition.at,
             ssid: new.ssid,
             bssid: new.bssid,
+            apName: new.apName,
             vendor: sample.vendor,
             channel: new.channel,
             rssiAtJoin: new.rssi
@@ -654,8 +663,10 @@ public final class IAirportMonitor {
             renderer.event(line: "Final IPv6: \(v6) gw \(ip.ipv6Router ?? "none")", redrawStatus: false)
         }
         if !history.isEmpty {
-            renderer.event(line: "#  time  ssid  bssid  vendor  ch  rssi_at_join  rssi_at_leave  dwell", redrawStatus: false)
-            for entry in history {
+            renderer.event(line: RoamHistoryEntry.header, redrawStatus: false)
+            for var entry in history {
+                // Names learned after the join still show in the table.
+                if entry.apName == nil { entry.apName = apNames.name(for: entry.bssid) }
                 renderer.event(line: entry.line(time: time, now: now), redrawStatus: false)
             }
         }
