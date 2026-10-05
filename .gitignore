@@ -1,0 +1,14 @@
+.build/
+*.xcodeproj
+.swiftpm/
+.DS_Store
+iAirport.log
+bssid_list.txt
+iairport-samples.csv
+iairport-roams.csv
+iairport-samples.csv.*.csv
+iairport-roams.csv.*.csv
+oui.csv.download
+oui.txt.new
+.vscode/
+build/

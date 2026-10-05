@@ -1,0 +1,125 @@
+import Foundation
+import Darwin
+
+public final class LogStreamTail {
+    private let queue: DispatchQueue
+    private let renderer: Renderer
+    private let onLine: (String) -> Void
+    private var process: Process?
+    private var stdoutPipe: Pipe?
+    private var stderrPipe: Pipe?
+    private var stdoutBuffer = Data()
+    private var stderrBuffer = Data()
+    private var stopping = false
+    private var restartAttempts = 0
+
+    public init(queue: DispatchQueue, renderer: Renderer, onLine: @escaping (String) -> Void) {
+        self.queue = queue
+        self.renderer = renderer
+        self.onLine = onLine
+    }
+
+    public func start() {
+        stopping = false
+        restartAttempts = 0
+        launch()
+    }
+
+    public func stop() {
+        stopping = true
+        guard let process else { return }
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        if process.isRunning {
+            process.terminate()
+            let deadline = Date().addingTimeInterval(2.0)
+            while process.isRunning && Date() < deadline {
+                usleep(50_000)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+            process.waitUntilExit()
+        }
+        self.process = nil
+        stdoutPipe = nil
+        stderrPipe = nil
+    }
+
+    private func launch() {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+        child.arguments = ["stream", "--predicate", "process == \"airportd\"", "--info", "--style", "compact"]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        stdoutPipe = stdout
+        stderrPipe = stderr
+        child.standardOutput = stdout
+        child.standardError = stderr
+        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.queue.async { self?.append(data: data, isError: false) }
+        }
+        stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.queue.async { self?.append(data: data, isError: true) }
+        }
+        child.terminationHandler = { [weak self] _ in
+            self?.queue.async { self?.handleTermination() }
+        }
+        do {
+            try child.run()
+            process = child
+        } catch {
+            renderer.event(line: "warning: could not start log stream: \(error.localizedDescription)", color: .yellow)
+        }
+    }
+
+    private func append(data: Data, isError: Bool) {
+        // Pipe chunks can split a multibyte character, so split on bytes and
+        // decode whole lines only.
+        if isError {
+            stderrBuffer.append(data)
+            drain(buffer: &stderrBuffer, emit: false)
+        } else {
+            stdoutBuffer.append(data)
+            drain(buffer: &stdoutBuffer, emit: true)
+        }
+    }
+
+    private func drain(buffer: inout Data, emit: Bool) {
+        while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            let line = String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self)
+            buffer.removeSubrange(buffer.startIndex...newline)
+            if emit { onLine(line) }
+        }
+    }
+
+    private func handleTermination() {
+        guard !stopping else { return }
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        process = nil
+        stdoutPipe = nil
+        stderrPipe = nil
+        restartAttempts += 1
+        guard restartAttempts <= 5 else {
+            renderer.event(line: "warning: log stream exited; continuing without log events", color: .yellow)
+            return
+        }
+        let delay = min(1 << max(restartAttempts - 1, 0), 8)
+        renderer.event(line: "warning: log stream exited; restarting in \(delay)s", color: .yellow)
+        queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+            guard let self, !self.stopping else { return }
+            self.launch()
+        }
+    }
+}
